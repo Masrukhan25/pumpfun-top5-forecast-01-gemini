@@ -1,36 +1,28 @@
-# Horizon-Aware Heuristic Forecaster
+# Monte Carlo Survival Forecaster (v2)
 
 ## Overview
-This entry provides probability forecasts and size distributions for cryptocurrency market rankings and capitalization profiles over dynamic time horizons. The model is built entirely using Python 3.13 standard library routines, operating deterministically with a fixed seed.
+This entry forecasts the top 5 new Solana coins by market cap, 24 hours out, using a Monte Carlo survival model. It is built entirely with Python 3.13 standard library routines, runs deterministically with a fixed seed, and uses no network access.
 
 ## Model Description
-The forecaster uses a horizon-aware heuristic approach to evaluate candidates and project market dynamics:
+- **Monte Carlo survival simulation**: For each candidate coin, the model simulates many future paths. Survival probability comes from an exponential hazard (per-10-minute survival ~0.97, adjusted by a coin's recent growth and staleness). Simulated market caps grow with a horizon-dependent drift and lognormal noise.
+- **Newcomer field**: At long horizons most of the top 5 are coins not yet in the history. The model reserves probability mass for unnamed newcomers via a retention factor that decays with horizon, so the forecast does not over-commit to coins that will not survive.
+- **Order probabilities**: Each place's named probabilities use a floor of 0.002 per coin and a softmax temperature that grows with horizon, so long-horizon forecasts stay diffuse instead of collapsing onto one coin.
+- **Size distributions**: Each place's size distribution is a 3-component mixture over log10 market cap in SOL: 55% Monte Carlo Gaussian (mean from simulated caps, std grows with horizon), 30% broad Gaussian centered at 3.25 log10 SOL (std 0.35), 15% uniform over the 82 bins. Components are mixed as true probabilities (density x bin width 0.05), floored at 0.0018 per bin after normalization so no bin is ever scored at the absolute floor.
+- **Top 5 selection**: Coins are chosen by maximizing total probability weighted by 1 / sqrt(place).
 
-- **Candidate Scoring**: For each target position, candidate coins (top 20 per place selected via softmax filtering) receive a composite score. The score combines:
-  - Log market capitalization (weighted at 2.5)
-  - Target rank distance penalty
-  - Pool-venue and complete-curve feature bonuses
-  - Damped momentum term (weight 0.08)
-  - Staleness penalty (-3.0 per missed mark)
-- **Probability Scaling & Horizon Softmax**: Softmax temperature expands with the forecast horizon $h$ according to $T(h) = 0.45 + 0.40 \sqrt{h}$. Derived probabilities are scaled down by a retention factor decaying from 0.70 to 0.10 (decay rate 0.60 per hour) to allocate probability mass for unnamed incoming assets.
-- **Size Distributions**: Modeled as per-place Gaussian distributions. Means are anchored to the most recent mark's top market caps with a $+0.30/\text{hour}$ drift, while standard deviations scale as $0.10 + 0.30 \sqrt{h}$. A uniform mixture of 0.06 is applied across 82 bins.
-- **Top 5 Selection**: Coins are chosen by maximizing total probability weighted by $1 / \sqrt{\text{place}}$.
-
-Inputs are read from `$MAKEFUN_INPUT_DIR/task.json` and `$MAKEFUN_INPUT_DIR/history.ndjson`, and outputs are written to `$MAKEFUN_OUTPUT_DIR/forecast.json` structured as `{"probabilities", "top5", "sizes"}`.
+Inputs are read from `$MAKEFUN_INPUT_DIR/task.json` and `$MAKEFUN_INPUT_DIR/history.ndjson`, and outputs are written to `$MAKEFUN_OUTPUT_DIR/forecast.json` with keys `{"probabilities", "top5", "sizes"}`.
 
 ## Execution
-To run the forecasting model locally:
-
 ```bash
 MAKEFUN_INPUT_DIR=input MAKEFUN_OUTPUT_DIR=out python3 main.py
 ```
 
 ## Backtest Results & Caveats
-The entry achieved a **mean backtest score of -35.669** across 4 evaluation splits:
+Evaluated with a faithful backtest that mimics the real practice setup (truncated history + answers at the task reads). Pooled mean log score **-36.385** across 10 reads in 4 splits:
 
-- **Split 1 (hist=2)**: -41.943
-- **Split 2 (hist=3)**: -39.291
-- **Split 3 (hist=4)**: -31.495
-- **Split 4 (hist=5)**: -29.948
+- **Split A (history 1 mark, 4 reads)**: -39.332
+- **Split B (history 2 marks, 3 reads)**: -40.064
+- **Split C (history 3 marks, 2 reads)**: -29.244
+- **Split D (history 4 marks, 1 read)**: -27.839
 
-*Caveat*: True practice scores can only be accurately measured by submitting to the live platform. Note that the backtest evaluation spans shorter horizons (10–40 minutes) compared to the real practice environment setup (10–70 minutes).
+*Caveat*: the faithful backtest is a proxy, not the real practice score. The real practice uses 5 marks of history and reads at 10-70 minute horizons; the backtest splits use 1-4 marks and shorter horizons. An oracle analysis (size distribution built from the actual answer caps) shows the pooled proxy has a ceiling near -34 even with perfect size knowledge, because at long horizons 4 of the top 5 coins are newcomers that cannot be named. The true practice score can only be measured by submitting to the live platform.
